@@ -366,6 +366,8 @@ Authenticated prewarms: use **`registerTokenRefresh`** with `target: 'websocket'
 
 More detail: **[docs/websockets.md](docs/websockets.md)** · UI sample: **[example/src/screens/WebSocketScreen.tsx](example/src/screens/WebSocketScreen.tsx)**.
 
+**Self-signed servers** — to connect to a server whose certificate fingerprint you received out of band (for example from a QR code shown by a LAN device), pass it as the fourth constructor argument: `new NitroWebSocket(url, undefined, undefined, { trust: { certificateSha256: ['72:A9:C4:…:9B:17'] } })`. Only that socket accepts the certificate; never pin one taken from a first, unverified connection. See [Trusting a specific certificate](docs/websockets.md#trusting-a-specific-certificate).
+
 ## Benchmarks
 
 These numbers are **without prefetch** — a common misconception is that nitro-fetch is only faster when prefetching. It isn't: plain `fetch` is faster on its own. In our testing it's around **15–25% faster** than the built-in `fetch` (release build, idle, Wi-Fi). The gap depends a lot on your backend — connection reuse, HTTP/2, and **HTTP/3 over QUIC** widen it. With [prefetch](#prefetching-in-js) the difference is far larger still.

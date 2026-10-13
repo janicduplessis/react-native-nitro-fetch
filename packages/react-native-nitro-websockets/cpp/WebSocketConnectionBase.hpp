@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "CertificatePins.hpp"
+
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -27,9 +29,12 @@ public:
 
   virtual ~WebSocketConnectionBase() = default;
 
+  // A non-empty pins list replaces certificate chain and hostname validation:
+  // the server is accepted only if its leaf certificate's SHA-256 is listed.
   virtual void connect(const std::string& url,
                        const std::vector<std::string>& protocols,
-                       const std::unordered_map<std::string, std::string>& headers) = 0;
+                       const std::unordered_map<std::string, std::string>& headers,
+                       const CertificatePins& pins) = 0;
   virtual void close(int code, const std::string& reason) = 0;
   virtual void send(const std::string& data) = 0;
   virtual void sendBinary(const uint8_t* data, size_t len) = 0;

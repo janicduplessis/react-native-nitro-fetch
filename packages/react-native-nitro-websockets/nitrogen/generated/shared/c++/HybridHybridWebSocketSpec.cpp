@@ -19,6 +19,7 @@ namespace margelo::nitro::nitrofetchwebsockets {
       prototype.registerHybridGetter("bufferedAmount", &HybridHybridWebSocketSpec::getBufferedAmount);
       prototype.registerHybridGetter("protocol", &HybridHybridWebSocketSpec::getProtocol);
       prototype.registerHybridGetter("extensions", &HybridHybridWebSocketSpec::getExtensions);
+      prototype.registerHybridGetter("supportsTrust", &HybridHybridWebSocketSpec::getSupportsTrust);
       prototype.registerHybridGetter("onOpen", &HybridHybridWebSocketSpec::getOnOpen);
       prototype.registerHybridSetter("onOpen", &HybridHybridWebSocketSpec::setOnOpen);
       prototype.registerHybridGetter("onMessage", &HybridHybridWebSocketSpec::getOnMessage);

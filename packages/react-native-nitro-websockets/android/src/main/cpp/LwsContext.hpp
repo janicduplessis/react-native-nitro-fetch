@@ -32,6 +32,11 @@ public:
 
   lws_context* ctx() const { return _ctx; }
 
+  // For connections that verify a pinned certificate themselves. It keeps no
+  // TLS session cache, so a pinned handshake is never resumed by, or resumes,
+  // another connection. Created on first use; call on the service thread.
+  lws_vhost* pinnedVhost();
+
 
   void schedule(std::function<void()> op);
 
@@ -49,6 +54,8 @@ private:
   void loop();
 
   lws_context* _ctx = nullptr;
+  lws_vhost* _pinnedVhost = nullptr;
+  lws_context_creation_info _info = {};
   std::thread _serviceThread;
   std::atomic<bool> _running{true};
   std::mutex _mu;

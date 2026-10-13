@@ -48,10 +48,22 @@ LwsContext::LwsContext() {
     throw std::runtime_error("Failed to create lws_context");
   }
 
+  _info = info;
+
   _serviceThread = std::thread([this]() {
     facebook::jni::ThreadScope scope;
     loop();
   });
+}
+
+lws_vhost* LwsContext::pinnedVhost() {
+  if (_pinnedVhost == nullptr) {
+    lws_context_creation_info info = _info;
+    info.vhost_name = "nitro-ws-pinned";
+    info.options |= LWS_SERVER_OPTION_DISABLE_TLS_SESSION_CACHE;
+    _pinnedVhost = lws_create_vhost(_ctx, &info);
+  }
+  return _pinnedVhost;
 }
 
 LwsContext::~LwsContext() {

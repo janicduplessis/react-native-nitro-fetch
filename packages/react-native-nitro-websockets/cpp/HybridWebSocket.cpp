@@ -19,6 +19,7 @@ namespace margelo::nitro::nitrofetchwebsockets {
 #include <NitroModules/ArrayBuffer.hpp>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 
 namespace margelo::nitro::nitrofetchwebsockets {
 
@@ -155,9 +156,25 @@ void HybridWebSocket::setOnError(const std::optional<std::function<void(const st
 void HybridWebSocket::connect(
     const std::string& url,
     const std::vector<std::string>& protocols,
-    const std::unordered_map<std::string, std::string>& headers) {
+    const std::unordered_map<std::string, std::string>& headers,
+    const std::optional<WebSocketConnectOptions>& options) {
 
-  auto existing = WebSocketPrewarmer::instance().tryGet(url);
+  CertificatePins pins;
+  if (options && options->trust) {
+    for (const auto& fingerprint : options->trust->certificateSha256) {
+      auto digest = parseCertificateSha256(fingerprint);
+      if (!digest) {
+        throw std::invalid_argument("Invalid certificate SHA-256 fingerprint: " + fingerprint);
+      }
+      pins.push_back(*digest);
+    }
+    if (pins.empty()) {
+      throw std::invalid_argument("trust.certificateSha256 must list at least one fingerprint");
+    }
+  }
+
+  // A prewarmed socket was validated against the system trust store, not the pins.
+  auto existing = pins.empty() ? WebSocketPrewarmer::instance().tryGet(url) : nullptr;
   const bool adopted = existing != nullptr;
   if (adopted || _connected) {
     _conn->setOnOpen(nullptr);
@@ -170,7 +187,7 @@ void HybridWebSocket::connect(
     bindCallbacks();
   }
   _connected = true;
-  if (!adopted) _conn->connect(url, protocols, headers);
+  if (!adopted) _conn->connect(url, protocols, headers, pins);
 }
 
 void HybridWebSocket::close(double code, const std::string& reason) {

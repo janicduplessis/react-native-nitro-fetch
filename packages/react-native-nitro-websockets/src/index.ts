@@ -4,6 +4,7 @@ import type {
   HybridWebSocket,
   HybridWebSocketMessageEvent,
   WebSocketCloseEvent as NitroWSCloseEvent,
+  WebSocketConnectOptions,
 } from './NitroWebSocket.nitro'
 
 export { createWebSocket } from './NitroWebSocket.nitro'
@@ -11,7 +12,9 @@ export type {
   HybridWebSocket,
   HybridWebSocketMessageEvent,
   WebSocketCloseEvent,
+  WebSocketConnectOptions,
   WebSocketReadyState,
+  WebSocketTrust,
 } from './NitroWebSocket.nitro'
 
 export type WebSocketMessageEvent = {
@@ -64,7 +67,8 @@ export class NitroWebSocket {
   constructor(
     url: string,
     protocols?: string | string[],
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    options?: WebSocketConnectOptions
   ) {
     this._ws = NitroModules.createHybridObject<HybridWebSocket>('WebSocket')
     const protocolList = protocols
@@ -87,7 +91,17 @@ export class NitroWebSocket {
       )
     }
 
-    this._ws.connect(url, protocolList, headers ?? {})
+    if (options?.trust) {
+      // Older native builds reject the fourth connect() argument with a less clear error.
+      if (this._ws.supportsTrust !== true) {
+        throw new TypeError(
+          'trust requires a native build of react-native-nitro-websockets that supports it'
+        )
+      }
+      this._ws.connect(url, protocolList, headers ?? {}, options)
+    } else {
+      this._ws.connect(url, protocolList, headers ?? {})
+    }
   }
 
   get readyState() {

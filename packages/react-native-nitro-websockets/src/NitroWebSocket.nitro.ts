@@ -13,6 +13,20 @@ export interface WebSocketCloseEvent {
   wasClean: boolean
 }
 
+export interface WebSocketTrust {
+  /**
+   * SHA-256 fingerprints of the DER-encoded leaf certificates to accept, as hex
+   * (64 digits, case-insensitive, `:` separators allowed). When set, the server
+   * is accepted only if its leaf certificate matches one of them; the system
+   * trust store and hostname are not checked for this connection.
+   */
+  certificateSha256: string[]
+}
+
+export interface WebSocketConnectOptions {
+  trust?: WebSocketTrust
+}
+
 export interface HybridWebSocket extends HybridObject<{
   ios: 'c++'
   android: 'c++'
@@ -22,11 +36,14 @@ export interface HybridWebSocket extends HybridObject<{
   readonly bufferedAmount: number
   readonly protocol: string
   readonly extensions: string
+  /** True when this native build understands `connect`'s `options.trust`. */
+  readonly supportsTrust: boolean
 
   connect(
     url: string,
     protocols: string[],
-    headers: Record<string, string>
+    headers: Record<string, string>,
+    options?: WebSocketConnectOptions
   ): void
   close(code: number, reason: string): void
   send(data: string): void
