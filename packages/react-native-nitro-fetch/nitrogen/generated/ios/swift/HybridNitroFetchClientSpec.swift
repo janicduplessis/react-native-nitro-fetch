@@ -10,7 +10,7 @@ import NitroModules
 /// See ``HybridNitroFetchClientSpec``
 public protocol HybridNitroFetchClientSpec_protocol: HybridObject {
   // Properties
-  
+  var supportsTrust: Bool { get }
 
   // Methods
   func request(req: NitroRequest) throws -> Promise<NitroResponse>

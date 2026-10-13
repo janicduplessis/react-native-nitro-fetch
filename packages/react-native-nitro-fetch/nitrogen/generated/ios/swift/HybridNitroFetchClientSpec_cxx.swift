@@ -121,7 +121,12 @@ open class HybridNitroFetchClientSpec_cxx {
   }
 
   // Properties
-  
+  public final var supportsTrust: Bool {
+    @inline(__always)
+    get {
+      return self.__implementation.supportsTrust
+    }
+  }
 
   // Methods
   @inline(__always)

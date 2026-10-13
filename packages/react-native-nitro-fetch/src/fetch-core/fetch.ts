@@ -5,6 +5,7 @@ import type {
   RequestCache,
   RequestPriority,
 } from '../Request';
+import type { NitroRequestTrust } from '../NitroFetch.nitro';
 import { resolveRequestBody, resolveBlobBody } from './body';
 import { isHttpUrl, getUrlString } from './url';
 import { nitroFetchRaw } from './raw';
@@ -39,6 +40,13 @@ export async function nitroFetch(
     cache?: RequestCache;
     timeoutMs?: number;
     priority?: RequestPriority;
+    /**
+     * Accept the server only if its leaf certificate matches one of these
+     * SHA-256 fingerprints, instead of validating it against the system trust
+     * store and hostname. https:// only. Not supported with `stream: true` or
+     * prefetching.
+     */
+    trust?: NitroRequestTrust;
   }
 ): Promise<Response> {
   // Merge defaults from NitroRequestClass if input is one
@@ -49,6 +57,10 @@ export async function nitroFetch(
       redirect: (init?.redirect as RequestRedirect) ?? input.redirect,
       cache: (init?.cache as RequestCache) ?? input.cache,
     } as any;
+  }
+
+  if (init?.trust && (init as any)?.stream === true) {
+    throw new TypeError('trust is not supported with stream: true');
   }
 
   // Streaming is http(s)-only; local URLs fall through to nitroFetchRaw (check runs only when streaming).

@@ -340,6 +340,18 @@ export function StreamingExample() {
 }
 ```
 
+### Trusting a specific certificate
+
+To talk to a server whose certificate you received out of band (for example a self-signed certificate on a LAN device, with its fingerprint shown in a QR code), pass its SHA-256 fingerprint. Only that request accepts the certificate, instead of the system trust store and hostname check; every other request keeps default validation.
+
+```ts
+await fetch('https://192.168.1.20:8443/status', {
+  trust: { certificateSha256: ['72:A9:C4:…:9B:17'] }, // openssl x509 -noout -fingerprint -sha256
+})
+```
+
+Never pin a certificate taken from a first, unverified connection. Details and limitations: [Trusting a specific certificate](docs/api.md#trusting-a-specific-certificate).
+
 ### WebSockets & prewarm
 
 Use **[react-native-nitro-websockets](docs/websockets.md)** for `NitroWebSocket` (browser-like API: `onopen`, `onmessage`, `send`, `close`, …). Install **`react-native-nitro-text-decoder`** alongside it — the socket package uses it to decode UTF-8 text frames.

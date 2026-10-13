@@ -13,6 +13,9 @@ export async function prefetch(
   // If native implementation is not present yet, do nothing
   const hasNative =
     typeof (NitroFetchHybrid as any)?.createClient === 'function';
+  if ((init as any)?.trust) {
+    throw new TypeError('trust is not supported by prefetch');
+  }
   if (!hasNative) return;
 
   init = await resolveRequestBody(input, init);
@@ -54,6 +57,9 @@ export async function prefetchOnAppStart(
     priority?: RequestPriority;
   }
 ): Promise<void> {
+  if ((init as any)?.trust) {
+    throw new TypeError('trust is not supported by prefetchOnAppStart');
+  }
   // Resolve request and prefetchKey
   init = await resolveRequestBody(input, init);
   init = await resolveBlobBody(init);

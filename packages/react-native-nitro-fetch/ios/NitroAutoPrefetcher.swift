@@ -283,7 +283,8 @@ public final class NitroAutoPrefetcher: NSObject {
       credentials: credentials,
       priority: priority,
       prefetchCacheTtlMs: prefetchCacheTtlMs,
-      requestId: nil
+      requestId: nil,
+      trust: nil
     )
   }
 

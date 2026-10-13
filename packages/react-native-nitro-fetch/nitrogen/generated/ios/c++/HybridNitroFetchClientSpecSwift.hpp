@@ -28,6 +28,8 @@ namespace margelo::nitro::nitrofetch { struct NitroFormDataPart; }
 namespace margelo::nitro::nitrofetch { enum class NitroRequestCredentials; }
 // Forward declaration of `NitroRequestPriority` to properly resolve imports.
 namespace margelo::nitro::nitrofetch { enum class NitroRequestPriority; }
+// Forward declaration of `NitroRequestTrust` to properly resolve imports.
+namespace margelo::nitro::nitrofetch { struct NitroRequestTrust; }
 
 #include "NitroResponse.hpp"
 #include <NitroModules/Promise.hpp>
@@ -42,6 +44,7 @@ namespace margelo::nitro::nitrofetch { enum class NitroRequestPriority; }
 #include "NitroFormDataPart.hpp"
 #include "NitroRequestCredentials.hpp"
 #include "NitroRequestPriority.hpp"
+#include "NitroRequestTrust.hpp"
 
 #include "NitroFetch-Swift-Cxx-Umbrella.hpp"
 
@@ -89,7 +92,9 @@ namespace margelo::nitro::nitrofetch {
 
   public:
     // Properties
-    
+    inline bool getSupportsTrust() noexcept override {
+      return _swiftPart.getSupportsTrust();
+    }
 
   public:
     // Methods

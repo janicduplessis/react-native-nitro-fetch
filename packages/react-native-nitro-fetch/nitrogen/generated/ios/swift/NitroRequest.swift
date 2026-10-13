@@ -18,7 +18,7 @@ public extension NitroRequest {
   /**
    * Create a new instance of `NitroRequest`.
    */
-  init(url: String, method: NitroRequestMethod?, headers: [NitroHeader]?, bodyString: String?, bodyBytes: ArrayBuffer?, bodyBytesBase64: String?, bodyFormData: [NitroFormDataPart]?, timeoutMs: Double?, followRedirects: Bool?, credentials: NitroRequestCredentials?, priority: NitroRequestPriority?, prefetchCacheTtlMs: Double?, requestId: String?) {
+  init(url: String, method: NitroRequestMethod?, headers: [NitroHeader]?, bodyString: String?, bodyBytes: ArrayBuffer?, bodyBytesBase64: String?, bodyFormData: [NitroFormDataPart]?, timeoutMs: Double?, followRedirects: Bool?, credentials: NitroRequestCredentials?, priority: NitroRequestPriority?, prefetchCacheTtlMs: Double?, requestId: String?, trust: NitroRequestTrust?) {
     self.init(std.string(url), { () -> bridge.std__optional_NitroRequestMethod_ in
       if let __unwrappedValue = method {
         return bridge.create_std__optional_NitroRequestMethod_(__unwrappedValue)
@@ -100,6 +100,12 @@ public extension NitroRequest {
     }(), { () -> bridge.std__optional_std__string_ in
       if let __unwrappedValue = requestId {
         return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
+      } else {
+        return .init()
+      }
+    }(), { () -> bridge.std__optional_NitroRequestTrust_ in
+      if let __unwrappedValue = trust {
+        return bridge.create_std__optional_NitroRequestTrust_(__unwrappedValue)
       } else {
         return .init()
       }
@@ -250,5 +256,10 @@ public extension NitroRequest {
         return nil
       }
     }()
+  }
+  
+  @inline(__always)
+  var trust: NitroRequestTrust? {
+    return self.__trust.value
   }
 }

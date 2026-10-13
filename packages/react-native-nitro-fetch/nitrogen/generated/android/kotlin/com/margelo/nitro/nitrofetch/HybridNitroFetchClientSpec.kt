@@ -27,7 +27,9 @@ import com.margelo.nitro.core.HybridObject
 )
 abstract class HybridNitroFetchClientSpec: HybridObject() {
   // Properties
-  
+  @get:DoNotStrip
+  @get:Keep
+  abstract val supportsTrust: Boolean
 
   // Methods
   @DoNotStrip

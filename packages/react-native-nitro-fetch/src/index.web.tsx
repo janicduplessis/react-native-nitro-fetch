@@ -59,6 +59,9 @@ export async function fetch(
     cache?: RequestCache;
   }
 ): Promise<Response> {
+  if ((init as { trust?: unknown } | undefined)?.trust) {
+    throw new TypeError('trust is not supported on web');
+  }
   let resolvedInput: RequestInfo | URL = input;
   let resolvedInit = init;
   if (input instanceof NitroRequestClass) {
@@ -101,6 +104,9 @@ export async function nitroFetchOnWorklet<T>(
   mapWorklet: NitroWorkletMapper<T>,
   _options?: { preferBytes?: boolean; runtimeName?: string }
 ): Promise<T> {
+  if ((init as { trust?: unknown } | undefined)?.trust) {
+    throw new TypeError('trust is not supported on web');
+  }
   console.warn(
     'nitroFetchOnWorklet: worklets are not available on web; running on the JS thread'
   );
@@ -130,6 +136,9 @@ export async function prefetch(
   _input: RequestInfo | URL,
   _init?: RequestInit
 ): Promise<void> {
+  if ((_init as { trust?: unknown } | undefined)?.trust) {
+    throw new TypeError('trust is not supported by prefetch');
+  }
   console.warn('prefetch is not available on web');
 }
 

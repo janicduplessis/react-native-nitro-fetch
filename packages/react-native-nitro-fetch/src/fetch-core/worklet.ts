@@ -1,4 +1,4 @@
-import type { NitroHeader } from '../NitroFetch.nitro';
+import type { NitroHeader, NitroRequestTrust } from '../NitroFetch.nitro';
 import type { RequestPriority } from '../Request';
 import { NitroFetchHybrid } from './client';
 import { buildNitroRequestPure } from './request';
@@ -30,7 +30,11 @@ function ensureWorkletRuntime(name = 'nitro-fetch'): any | undefined {
 export async function nitroFetchOnWorklet<T>(
   input: RequestInfo | URL,
   init:
-    | (RequestInit & { timeoutMs?: number; priority?: RequestPriority })
+    | (RequestInit & {
+        timeoutMs?: number;
+        priority?: RequestPriority;
+        trust?: NitroRequestTrust;
+      })
     | undefined,
   mapWorklet: NitroWorkletMapper<T>,
   options?: { preferBytes?: boolean; runtimeName?: string }
@@ -65,6 +69,11 @@ export async function nitroFetchOnWorklet<T>(
     'worklet';
     const nitroFetchClient = NitroFetchHybrid.createClient();
     const request = buildNitroRequestPure(input, init);
+    if (request.trust && nitroFetchClient.supportsTrust !== true) {
+      throw new TypeError(
+        'trust requires a native build of react-native-nitro-fetch that supports it'
+      );
+    }
     const res = nitroFetchClient.requestSync(request);
     const payload = {
       url: res.url,

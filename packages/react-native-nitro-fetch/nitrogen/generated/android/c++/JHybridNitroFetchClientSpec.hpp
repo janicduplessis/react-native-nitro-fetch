@@ -50,7 +50,7 @@ namespace margelo::nitro::nitrofetch {
 
   public:
     // Properties
-    
+    bool getSupportsTrust() override;
 
   public:
     // Methods

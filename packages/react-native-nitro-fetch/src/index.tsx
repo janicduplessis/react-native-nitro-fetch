@@ -11,6 +11,7 @@ export type { NitroFormDataPart } from './fetch-core';
 export type {
   NitroRequestNativeType as NitroRequest,
   NitroResponseNativeType as NitroResponse,
+  NitroRequestTrust as RequestTrust,
 } from './fetch-core';
 export type {
   RequestRedirect,
