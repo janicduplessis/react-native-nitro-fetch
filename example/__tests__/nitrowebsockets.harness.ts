@@ -346,6 +346,33 @@ describe('NitroWebSocket - Server-initiated close', () => {
   });
 });
 
+describe('NitroWebSocket - Large messages', () => {
+  it('receives a message larger than 1 MiB', async () => {
+    const ws = await withTimeout(
+      new Promise<NitroWebSocket>((resolve, reject) => {
+        const _ws = new NitroWebSocket(`${WS_BASE}/ws/echo`);
+        _ws.onopen = () => resolve(_ws);
+        _ws.onerror = (err) => reject(new Error(err));
+      })
+    );
+    const size = 3 * 1024 * 1024;
+    const payload = new Uint8Array(size);
+    for (let i = 0; i < size; i++) payload[i] = i % 251;
+    const echoed = await withTimeout(
+      new Promise<WebSocketMessageEvent>((resolve, reject) => {
+        ws.onmessage = resolve;
+        ws.onclose = (e) => reject(new Error(`closed with ${e.code}`));
+        ws.send(payload.buffer);
+      })
+    );
+    const bytes = new Uint8Array(echoed.binaryData!);
+    expect(bytes.length).toBe(size);
+    expect(bytes[size - 1]).toBe((size - 1) % 251);
+    ws.onclose = null;
+    await closeAndWait(ws);
+  });
+});
+
 describe('NitroWebSocket - Fragmented messages', () => {
   function firstMessage(url: string): Promise<WebSocketMessageEvent> {
     return new Promise<WebSocketMessageEvent>((resolve, reject) => {

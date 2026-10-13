@@ -169,6 +169,8 @@ void NWWebSocketConnection::connect(
                                             delegateQueue:delegateQueue];
 
   _impl->task = [_impl->session webSocketTaskWithRequest:request];
+  // NSURLSessionWebSocketTask defaults to 1 MiB; match the 16 MiB limit of the other transports.
+  _impl->task.maximumMessageSize = 16 * 1024 * 1024;
 
   auto weakSelf =
     std::weak_ptr<WebSocketConnectionBase>(shared_from_this());
