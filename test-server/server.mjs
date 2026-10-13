@@ -7,7 +7,12 @@
 // Reachable from the emulators/simulators that CI boots on the same host:
 //   - Android emulator -> http://10.0.2.2:9876
 //   - iOS simulator    -> http://127.0.0.1:9876
-import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { randomUUID, X509Certificate } from 'node:crypto';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import https from 'node:https';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import express from 'express';
 import multer from 'multer';
@@ -168,6 +173,11 @@ app.get('/charset/:value', (req, res) => {
   res.set('Content-Type', `text/plain; charset=${req.params.value}`).send(Buffer.from('café crème', 'latin1'));
 });
 
+app.all('/redirect-to', (req, res) => {
+  const status = Number(req.query.status) || 302;
+  res.status(status).set('Location', String(req.query.url)).end();
+});
+
 app.all('/redirect/:n', (req, res) => {
   const n = parseInt(req.params.n, 10) || 1;
   res.status(302).set('Location', n > 1 ? `/redirect/${n - 1}` : '/get').end();
@@ -268,6 +278,26 @@ app.all('/delay/:n', (req, res) => {
   req.on('close', () => clearTimeout(timer));
 });
 
+// Self-signed certificate for the certificate pinning tests, generated per run
+// and issued for nitro-pinned.invalid, so neither the chain nor the hostname of
+// https://127.0.0.1 / https://10.0.2.2 validates without a pin.
+const tlsDir = mkdtempSync(join(tmpdir(), 'nitro-fetch-test-server-'));
+execFileSync('openssl', [
+  'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '30',
+  '-subj', '/CN=nitro-fetch pinned test server',
+  '-addext', 'subjectAltName=DNS:nitro-pinned.invalid',
+  '-addext', 'extendedKeyUsage=serverAuth',
+  '-keyout', join(tlsDir, 'key.pem'),
+  '-out', join(tlsDir, 'cert.pem'),
+], { stdio: 'ignore' });
+const tlsCert = readFileSync(join(tlsDir, 'cert.pem'));
+const tlsKey = readFileSync(join(tlsDir, 'key.pem'));
+const tlsFingerprint = new X509Certificate(tlsCert).fingerprint256;
+
+app.get('/tls/fingerprint', (_req, res) => {
+  res.json({ sha256: tlsFingerprint });
+});
+
 const server = app.listen(PORT, '0.0.0.0', () => {
   // eslint-disable-next-line no-console
   console.log(`nitro-fetch-test-server listening on http://0.0.0.0:${PORT}`);
@@ -289,7 +319,7 @@ const burstMessage = (i) => {
 
 // /ws/stall holds the TCP connection open without completing the handshake, so
 // the client stays in CONNECTING. Everything else goes to the ws server.
-server.on('upgrade', (req, socket, head) => {
+const onUpgrade = (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/ws/stall') {
     socket.on('error', () => {});
@@ -325,7 +355,8 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-});
+};
+server.on('upgrade', onUpgrade);
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -354,3 +385,12 @@ wss.on('connection', (ws, req) => {
 });
 
 listenPausedWebSocket(PORT + 1);
+
+// Same HTTP and WebSocket endpoints over TLS with the generated certificate.
+// Clients only connect when they pin its SHA-256 (served at /tls/fingerprint).
+const tlsServer = https
+  .createServer({ cert: tlsCert, key: tlsKey }, app)
+  .listen(PORT + 2, '0.0.0.0');
+tlsServer.on('upgrade', onUpgrade);
+// A second TLS origin with the same certificate, for cross-origin redirects.
+https.createServer({ cert: tlsCert, key: tlsKey }, app).listen(PORT + 3, '0.0.0.0');

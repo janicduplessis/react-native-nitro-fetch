@@ -11,3 +11,10 @@ const HOST = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 export const BASE = `http://${HOST}:${PORT}`;
 export const WS_BASE = `ws://${HOST}:${PORT}`;
 export const WS_PAUSED_URL = `ws://${HOST}:${PORT + 1}`;
+
+// Same server over TLS with a self-signed certificate the test server generates
+// at start, for the certificate pinning tests. `${BASE}/tls/fingerprint` serves
+// its SHA-256. TLS_OTHER_ORIGIN uses the same certificate on another port.
+export const TLS_BASE = `https://${HOST}:${PORT + 2}`;
+export const WSS_TLS_BASE = `wss://${HOST}:${PORT + 2}`;
+export const TLS_OTHER_ORIGIN = `https://${HOST}:${PORT + 3}`;
