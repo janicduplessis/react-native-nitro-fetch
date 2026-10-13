@@ -19,6 +19,8 @@ namespace margelo::nitro::nitrofetchwebsockets { enum class WebSocketReadyState;
 namespace margelo::nitro::nitrofetchwebsockets { struct HybridWebSocketMessageEvent; }
 // Forward declaration of `WebSocketCloseEvent` to properly resolve imports.
 namespace margelo::nitro::nitrofetchwebsockets { struct WebSocketCloseEvent; }
+// Forward declaration of `WebSocketConnectOptions` to properly resolve imports.
+namespace margelo::nitro::nitrofetchwebsockets { struct WebSocketConnectOptions; }
 
 #include "WebSocketReadyState.hpp"
 #include <string>
@@ -28,6 +30,7 @@ namespace margelo::nitro::nitrofetchwebsockets { struct WebSocketCloseEvent; }
 #include "WebSocketCloseEvent.hpp"
 #include <vector>
 #include <unordered_map>
+#include "WebSocketConnectOptions.hpp"
 #include <NitroModules/ArrayBuffer.hpp>
 
 namespace margelo::nitro::nitrofetchwebsockets {
@@ -73,7 +76,7 @@ namespace margelo::nitro::nitrofetchwebsockets {
 
     public:
       // Methods
-      virtual void connect(const std::string& url, const std::vector<std::string>& protocols, const std::unordered_map<std::string, std::string>& headers) = 0;
+      virtual void connect(const std::string& url, const std::vector<std::string>& protocols, const std::unordered_map<std::string, std::string>& headers, const std::optional<WebSocketConnectOptions>& options) = 0;
       virtual void close(double code, const std::string& reason) = 0;
       virtual void send(const std::string& data) = 0;
       virtual void sendBinary(const std::shared_ptr<ArrayBuffer>& data) = 0;

@@ -22,7 +22,8 @@ public:
 
   void connect(const std::string& url,
                const std::vector<std::string>& protocols,
-               const std::unordered_map<std::string, std::string>& headers) override;
+               const std::unordered_map<std::string, std::string>& headers,
+               const CertificatePins& pins) override;
   void close(int code, const std::string& reason) override;
   void send(const std::string& data) override;
   void sendBinary(const uint8_t* data, size_t len) override;

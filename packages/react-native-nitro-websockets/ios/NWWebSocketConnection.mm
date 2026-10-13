@@ -5,7 +5,9 @@
 //  Created by Ritesh Shukla on 23.03.26.
 //
 
+#import <CommonCrypto/CommonDigest.h>
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
 #include "NWWebSocketConnection.hpp"
 #include "NWStreamWebSocketConnection.hpp"
 
@@ -27,6 +29,9 @@ static os_log_t nitroWsLog() {
 @property (nonatomic, copy) void (^onOpen)(NSString* _Nullable protocol);
 @property (nonatomic, copy) void (^onServerClose)(int code, NSString* _Nullable reason);
 @property (nonatomic, copy) void (^onComplete)(NSError* _Nullable error);
+// Set for pinned connections: decides the server trust challenge instead of the system.
+@property (nonatomic, copy) BOOL (^acceptServerTrust)(SecTrustRef trust);
+@property (atomic) BOOL serverTrustRejected;
 @end
 
 @implementation NWWSDelegate
@@ -49,6 +54,34 @@ static os_log_t nitroWsLog() {
 }
 
 - (void)URLSession:(NSURLSession *)session
+    didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+  SecTrustRef trust = challenge.protectionSpace.serverTrust;
+  if (!self.acceptServerTrust ||
+      ![challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust] ||
+      !trust) {
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+    return;
+  }
+  if (self.acceptServerTrust(trust)) {
+    completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:trust]);
+  } else {
+    self.serverTrustRejected = YES;
+    completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+  }
+}
+
+- (void)URLSession:(NSURLSession *)session
+                          task:(NSURLSessionTask *)task
+    willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+                    newRequest:(NSURLRequest *)request
+             completionHandler:(void (^)(NSURLRequest *))completionHandler {
+  NSString* scheme = request.URL.scheme.lowercaseString;
+  BOOL secure = [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"wss"];
+  completionHandler(self.acceptServerTrust && !secure ? nil : request);
+}
+
+- (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
     didCompleteWithError:(NSError *)error {
   if (self.onComplete) self.onComplete(error);
@@ -58,6 +91,22 @@ static os_log_t nitroWsLog() {
 
 
 namespace margelo::nitro::nitrofetchwebsockets {
+
+static bool leafCertificateMatches(SecTrustRef trust, const CertificatePins& pins) {
+  CFArrayRef chain = SecTrustCopyCertificateChain(trust);
+  if (!chain) return false;
+  bool matches = false;
+  if (CFArrayGetCount(chain) > 0) {
+    auto leaf = static_cast<SecCertificateRef>(const_cast<void*>(CFArrayGetValueAtIndex(chain, 0)));
+    CFDataRef der = SecCertificateCopyData(leaf);
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(CFDataGetBytePtr(der), static_cast<CC_LONG>(CFDataGetLength(der)), digest);
+    matches = matchesCertificatePin(pins, digest);
+    CFRelease(der);
+  }
+  CFRelease(chain);
+  return matches;
+}
 
 // ── PIMPL (holds ARC-managed Foundation objects) ─────────────────────────
 
@@ -96,7 +145,8 @@ NWWebSocketConnection::~NWWebSocketConnection() {
 void NWWebSocketConnection::connect(
     const std::string& url,
     const std::vector<std::string>& protocols,
-    const std::unordered_map<std::string, std::string>& headers) {
+    const std::unordered_map<std::string, std::string>& headers,
+    const CertificatePins& pins) {
 
   {
     std::lock_guard<std::mutex> lock(_strMu);
@@ -140,6 +190,13 @@ void NWWebSocketConnection::connect(
     return;
   }
 
+  NSString* scheme = nsURL.scheme.lowercaseString;
+  if (!pins.empty() && ![scheme isEqualToString:@"wss"] && ![scheme isEqualToString:@"https"]) {
+    fireError("Certificate pinning requires a wss:// URL");
+    fireClose(1006, "", false);
+    return;
+  }
+
   NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:nsURL];
 
   if (!protocols.empty()) {
@@ -158,6 +215,13 @@ void NWWebSocketConnection::connect(
   }
 
   _impl->delegate = [[NWWSDelegate alloc] init];
+  if (!pins.empty()) {
+    const CertificatePins accepted = pins;
+    _impl->delegate.acceptServerTrust = ^BOOL(SecTrustRef trust) {
+      return leafCertificateMatches(trust, accepted);
+    };
+  }
+  __weak NWWSDelegate* weakDelegate = _impl->delegate;
 
   NSURLSessionConfiguration* config =
     [NSURLSessionConfiguration defaultSessionConfiguration];
@@ -236,7 +300,9 @@ void NWWebSocketConnection::connect(
     } else if (conn->_localCloseCode > 0) {
       conn->fireClose(conn->_localCloseCode, conn->_localCloseReason, true);
     } else {
-      if (error && error.code != NSURLErrorCancelled) {
+      if (weakDelegate.serverTrustRejected) {
+        conn->fireError("The server certificate does not match the pinned SHA-256 fingerprints");
+      } else if (error && error.code != NSURLErrorCancelled) {
         std::string msg =
           [[error localizedDescription] UTF8String] ?: "Connection error";
         conn->fireError(msg);

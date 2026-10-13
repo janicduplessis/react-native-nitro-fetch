@@ -7,7 +7,9 @@
 // Reachable from the emulators/simulators that CI boots on the same host:
 //   - Android emulator -> http://10.0.2.2:9876
 //   - iOS simulator    -> http://127.0.0.1:9876
-import { randomUUID } from 'node:crypto';
+import { randomUUID, X509Certificate } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import https from 'node:https';
 import { gzipSync } from 'node:zlib';
 import express from 'express';
 import multer from 'multer';
@@ -168,6 +170,10 @@ app.get('/charset/:value', (req, res) => {
   res.set('Content-Type', `text/plain; charset=${req.params.value}`).send(Buffer.from('café crème', 'latin1'));
 });
 
+app.get('/redirect-to', (req, res) => {
+  res.status(302).set('Location', String(req.query.url)).end();
+});
+
 app.all('/redirect/:n', (req, res) => {
   const n = parseInt(req.params.n, 10) || 1;
   res.status(302).set('Location', n > 1 ? `/redirect/${n - 1}` : '/get').end();
@@ -268,6 +274,14 @@ app.all('/delay/:n', (req, res) => {
   req.on('close', () => clearTimeout(timer));
 });
 
+const tlsFingerprint = new X509Certificate(
+  readFileSync(new URL('./tls/cert.pem', import.meta.url))
+).fingerprint256;
+
+app.get('/tls/fingerprint', (_req, res) => {
+  res.json({ sha256: tlsFingerprint });
+});
+
 const server = app.listen(PORT, '0.0.0.0', () => {
   // eslint-disable-next-line no-console
   console.log(`nitro-fetch-test-server listening on http://0.0.0.0:${PORT}`);
@@ -289,7 +303,7 @@ const burstMessage = (i) => {
 
 // /ws/stall holds the TCP connection open without completing the handshake, so
 // the client stays in CONNECTING. Everything else goes to the ws server.
-server.on('upgrade', (req, socket, head) => {
+const onUpgrade = (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/ws/stall') {
     socket.on('error', () => {});
@@ -325,7 +339,8 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-});
+};
+server.on('upgrade', onUpgrade);
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -354,3 +369,17 @@ wss.on('connection', (ws, req) => {
 });
 
 listenPausedWebSocket(PORT + 1);
+
+// Same HTTP and WebSocket endpoints over TLS with a self-signed certificate
+// (tls/cert.pem, issued for nitro-pinned.invalid) for the certificate pinning
+// tests. Clients only connect when they pin the certificate's SHA-256.
+const tlsServer = https
+  .createServer(
+    {
+      cert: readFileSync(new URL('./tls/cert.pem', import.meta.url)),
+      key: readFileSync(new URL('./tls/key.pem', import.meta.url)),
+    },
+    app
+  )
+  .listen(PORT + 2, '0.0.0.0');
+tlsServer.on('upgrade', onUpgrade);

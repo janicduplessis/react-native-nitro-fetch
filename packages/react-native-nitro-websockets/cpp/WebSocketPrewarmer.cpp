@@ -42,7 +42,7 @@ void WebSocketPrewarmer::preConnect(
 #endif
 
   auto conn = createPlatformConnection();
-  conn->connect(url, protocols, headers);
+  conn->connect(url, protocols, headers, {});
 
   std::shared_ptr<WebSocketConnectionBase> replaced;
   {

@@ -9,6 +9,7 @@
 #include "LwsContext.hpp"
 
 #include <libwebsockets.h>
+#include <mbedtls/sha256.h>
 #include <cctype>
 #include <cstring>
 #include <stdexcept>
@@ -111,6 +112,8 @@ static ParsedUrl parseUrl(const std::string& url) {
 }
 
 
+
+static const char* kPinnedRequiresWss = "Certificate pinning requires a wss:// URL";
 
 static bool hasScheme(const std::string& ref) {
   const size_t colon = ref.find(':');
@@ -237,8 +240,10 @@ WebSocketConnection::WebSocketConnection() {}
 void WebSocketConnection::connect(
     const std::string& url,
     const std::vector<std::string>& protocols,
-    const std::unordered_map<std::string, std::string>& headers) {
+    const std::unordered_map<std::string, std::string>& headers,
+    const CertificatePins& pins) {
   _state = State::CONNECTING;
+  _pins = pins;
   startConnect(url, protocols, headers);
 }
 
@@ -257,6 +262,7 @@ void WebSocketConnection::startConnect(
   ParsedUrl parsed;
   try {
     parsed = parseUrl(url);
+    if (!_pins.empty() && !parsed.isWss) throw std::invalid_argument(kPinnedRequiresWss);
   } catch (const std::exception& e) {
     std::string what = e.what();
     _state = State::CLOSED;
@@ -289,7 +295,9 @@ void WebSocketConnection::startConnect(
   auto isWss       = parsed.isWss;
   auto hostHeader  = parsed.hostHeader;
 
-  LwsContext::instance().schedule([self, host, port, path, protoStr, isWss, hostHeader]() {
+  const bool pinned = !_pins.empty();
+
+  LwsContext::instance().schedule([self, host, port, path, protoStr, isWss, hostHeader, pinned]() {
     self->_selfRef = self;
     if (self->_state.load() != State::CONNECTING) {
       self->_selfRef.reset();
@@ -308,6 +316,18 @@ void WebSocketConnection::startConnect(
     i.local_protocol_name = "nitro-ws";
     i.userdata     = self.get();
     i.ssl_connection = isWss ? LCCSCF_USE_SSL : 0;
+    if (pinned) {
+      // The pin replaces chain and hostname validation; handleAppendHandshakeHeader
+      // checks it after the TLS handshake, before the upgrade request is sent.
+      i.ssl_connection |= LCCSCF_ALLOW_INSECURE;
+      i.vhost = LwsContext::instance().pinnedVhost();
+      if (i.vhost == nullptr) {
+        self->_selfRef.reset();
+        self->fireError("Failed to set up the pinned TLS context");
+        self->fireClose(1006, "", false);
+        return;
+      }
+    }
 
     lws* wsi = lws_client_connect_via_info(&i);
     if (wsi == nullptr) {
@@ -649,7 +669,7 @@ void WebSocketConnection::handleRedirect(const std::string& location) {
   if      (url.rfind("https://", 0) == 0) url = "wss://" + url.substr(8);
   else if (url.rfind("http://",  0) == 0) url = "ws://"  + url.substr(7);
   try {
-    parseUrl(url);
+    if (!parseUrl(url).isWss && !_pins.empty()) throw std::invalid_argument(kPinnedRequiresWss);
   } catch (const std::exception& e) {
     _failureMessage = e.what();
     return;
@@ -680,7 +700,29 @@ void WebSocketConnection::handleRedirect(const std::string& location) {
   startConnect(url, protocols, headers);
 }
 
+bool WebSocketConnection::peerCertificateMatchesPins(lws* wsi) {
+  lws_tls_cert_info_results probe{};
+  lws_tls_peer_cert_info(wsi, LWS_TLS_CERT_INFO_DER_RAW, &probe, 0);
+  if (probe.ns.len <= 0) return false;
+  const size_t derLen = static_cast<size_t>(probe.ns.len);
+  std::vector<uint8_t> storage(sizeof(lws_tls_cert_info_results) + derLen);
+  auto* info = reinterpret_cast<lws_tls_cert_info_results*>(storage.data());
+  if (lws_tls_peer_cert_info(wsi, LWS_TLS_CERT_INFO_DER_RAW, info, derLen) != 0 ||
+      info->ns.len != probe.ns.len) {
+    return false;
+  }
+  uint8_t digest[32];
+  if (mbedtls_sha256(reinterpret_cast<const unsigned char*>(info->ns.name), derLen, digest, 0) != 0) {
+    return false;
+  }
+  return matchesCertificatePin(_pins, digest);
+}
+
 bool WebSocketConnection::handleAppendHandshakeHeader(uint8_t** p, uint8_t* end, lws* wsi) {
+  if (!_pins.empty() && !peerCertificateMatchesPins(wsi)) {
+    _failureMessage = "The server certificate does not match the pinned SHA-256 fingerprints";
+    return false;
+  }
   std::unordered_map<std::string, std::string> headers;
   {
     std::lock_guard<std::mutex> lock(_pendingConnectMu);

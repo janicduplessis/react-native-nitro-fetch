@@ -42,7 +42,8 @@ public:
 
   void connect(const std::string& url,
                const std::vector<std::string>& protocols,
-               const std::unordered_map<std::string, std::string>& headers) override;
+               const std::unordered_map<std::string, std::string>& headers,
+               const std::optional<WebSocketConnectOptions>& options) override;
 
   void close(double code, const std::string& reason) override;
   void send(const std::string& data) override;

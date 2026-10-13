@@ -27,7 +27,8 @@ public:
 
   void connect(const std::string& url,
                const std::vector<std::string>& protocols,
-               const std::unordered_map<std::string, std::string>& headers) override;
+               const std::unordered_map<std::string, std::string>& headers,
+               const CertificatePins& pins) override;
   void close(int code, const std::string& reason) override;
   void send(const std::string& data) override;
   void sendBinary(const uint8_t* data, size_t len) override;
@@ -61,6 +62,7 @@ private:
   void startConnect(const std::string& url,
                     const std::vector<std::string>& protocols,
                     const std::unordered_map<std::string, std::string>& headers);
+  bool peerCertificateMatchesPins(lws* wsi);
   void requestWrite();
   void fireClose(int code, const std::string& reason, bool wasClean);
   void fireError(const std::string& msg);
@@ -69,6 +71,7 @@ private:
   std::shared_ptr<WebSocketConnection> _selfRef;
 
   lws*        _wsi = nullptr;
+  CertificatePins _pins;
   std::string _url;
   std::string _negotiatedProtocol;
   std::string _extensions;

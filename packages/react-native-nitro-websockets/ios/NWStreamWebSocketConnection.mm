@@ -9,6 +9,7 @@
 #import <CFNetwork/CFNetwork.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <Network/Network.h>
+#import <Security/Security.h>
 #import <Security/SecureTransport.h>
 #include "NWStreamWebSocketConnection.hpp"
 #include "Utf8.hpp"
@@ -219,6 +220,24 @@ NSURL* cookieURL(NSURL* url) {
   return components.URL;
 }
 
+bool leafCertificateMatches(sec_trust_t trust, const CertificatePins& pins) {
+  SecTrustRef secTrust = sec_trust_copy_ref(trust);
+  if (!secTrust) return false;
+  bool matches = false;
+  CFArrayRef chain = SecTrustCopyCertificateChain(secTrust);
+  if (chain && CFArrayGetCount(chain) > 0) {
+    auto leaf = static_cast<SecCertificateRef>(const_cast<void*>(CFArrayGetValueAtIndex(chain, 0)));
+    CFDataRef der = SecCertificateCopyData(leaf);
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(CFDataGetBytePtr(der), static_cast<CC_LONG>(CFDataGetLength(der)), digest);
+    matches = matchesCertificatePin(pins, digest);
+    CFRelease(der);
+  }
+  if (chain) CFRelease(chain);
+  CFRelease(secTrust);
+  return matches;
+}
+
 bool isValidCloseCode(int code) {
   return (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014) || (code >= 3000 && code <= 4999);
 }
@@ -301,6 +320,7 @@ struct NWStreamWebSocketConnection::Impl {
 
   NSURL* url = nil;
   Fields extraHeaders;
+  CertificatePins pins;
   std::string requestedProtocols;
   std::string key;
   std::string offeredProtocols;
@@ -352,11 +372,12 @@ struct NWStreamWebSocketConnection::Impl {
   }
 
   void begin(const std::shared_ptr<WebSocketConnectionBase>& self, NSURL* target,
-             const std::string& protocols, const Fields& headers) {
+             const std::string& protocols, const Fields& headers, const CertificatePins& certificatePins) {
     if (finished) return;
     weakSelf = self;
     requestedProtocols = protocols;
     extraHeaders = headers;
+    pins = certificatePins;
     if (owner->_state.load(std::memory_order_acquire) != State::CONNECTING) return;
     if (!isValidTarget(target)) {
       finish(1006, "", false, "Invalid WebSocket URL: " + owner->url());
@@ -370,10 +391,34 @@ struct NWStreamWebSocketConnection::Impl {
     connected = false;
     handshake.clear();
     const bool secure = isSecureScheme(target.scheme);
+    if (!pins.empty() && !secure) {
+      finish(1006, "", false, "Certificate pinning requires a wss:// URL");
+      return;
+    }
     const int port = target.port ? target.port.intValue : (secure ? 443 : 80);
     nw_endpoint_t endpoint = nw_endpoint_create_host(target.host.UTF8String, std::to_string(port).c_str());
+    nw_parameters_configure_protocol_block_t configureTls =
+      secure ? NW_PARAMETERS_DEFAULT_CONFIGURATION : NW_PARAMETERS_DISABLE_PROTOCOL;
+    if (secure && !pins.empty()) {
+      auto weak = weakSelf;
+      const CertificatePins accepted = pins;
+      dispatch_queue_t verifyQueue = queue;
+      configureTls = ^(nw_protocol_options_t tlsOptions) {
+        sec_protocol_options_t secOptions = nw_tls_copy_sec_protocol_options(tlsOptions);
+        sec_protocol_options_set_verify_block(secOptions,
+          ^(sec_protocol_metadata_t, sec_trust_t trust, sec_protocol_verify_complete_t complete) {
+            const bool matches = leafCertificateMatches(trust, accepted);
+            if (!matches) {
+              if (auto strong = weak.lock()) {
+                from(strong)->failure = "The server certificate does not match the pinned SHA-256 fingerprints";
+              }
+            }
+            complete(matches);
+          }, verifyQueue);
+      };
+    }
     nw_parameters_t parameters = nw_parameters_create_secure_tcp(
-      secure ? NW_PARAMETERS_DEFAULT_CONFIGURATION : NW_PARAMETERS_DISABLE_PROTOCOL,
+      configureTls,
       ^(nw_protocol_options_t options) {
         nw_tcp_options_set_no_delay(options, true);
       });
@@ -1145,7 +1190,8 @@ NWStreamWebSocketConnection::~NWStreamWebSocketConnection() = default;
 void NWStreamWebSocketConnection::connect(
     const std::string& url,
     const std::vector<std::string>& protocols,
-    const std::unordered_map<std::string, std::string>& headers) {
+    const std::unordered_map<std::string, std::string>& headers,
+    const CertificatePins& pins) {
   {
     std::lock_guard<std::mutex> lock(_strMu);
     _url = url;
@@ -1169,8 +1215,9 @@ void NWStreamWebSocketConnection::connect(
   impl->signpost = os_signpost_id_generate(nitroWsLog());
   os_signpost_interval_begin(nitroWsLog(), impl->signpost, "NitroWS", "%{public}s", url.c_str());
 #endif
+  CertificatePins certificatePins = pins;
   dispatch_async(impl->queue, ^{
-    impl->begin(self, target, joined, fields);
+    impl->begin(self, target, joined, fields, certificatePins);
   });
 }
 
