@@ -33,7 +33,7 @@ fun ByteBuffer.toByteArray(): ByteArray {
 private val charsetParam = Regex("charset=\"?([A-Za-z0-9_\\-:.]+)", RegexOption.IGNORE_CASE)
 private val charsetsByContentType = ConcurrentHashMap<String, Charset>()
 
-private fun charsetOf(contentType: String): Charset {
+internal fun charsetOf(contentType: String): Charset {
   charsetsByContentType[contentType]?.let { return it }
   val m = charsetParam.find(contentType)
   val charset = try {
@@ -45,7 +45,7 @@ private fun charsetOf(contentType: String): Charset {
   return charset
 }
 
-private fun decodeText(bytes: ByteArray, length: Int, charset: Charset): String? {
+internal fun decodeText(bytes: ByteArray, length: Int, charset: Charset): String? {
   if (charset != Charsets.UTF_8) {
     return charset.newDecoder()
       .onMalformedInput(CodingErrorAction.REPORT)
@@ -115,7 +115,7 @@ private fun isWellFormedUtf8(bytes: ByteArray, from: Int, length: Int): Boolean 
 }
 
 // Wrap raw bytes into a Nitro ArrayBuffer for zero-base64 bridging to JS.
-private fun ByteArray.toArrayBuffer(length: Int = size): ArrayBuffer {
+internal fun ByteArray.toArrayBuffer(length: Int = size): ArrayBuffer {
   val ab = ArrayBuffer.allocate(length)
   ab.getBuffer(false).put(this, 0, length)
   return ab
@@ -224,11 +224,11 @@ private class IdleTimeoutCallback(
 @DoNotStrip
 class HybridNitroFetchClient(private val engine: CronetEngine, private val executor: Executor) : HybridNitroFetchClientSpec() {
   
-  private val activeRequests = ConcurrentHashMap<String, UrlRequest>()
+  private val activeRequests = ConcurrentHashMap<String, () -> Unit>()
 
   override fun cancelRequest(requestId: String) {
     // https://developer.android.com/develop/connectivity/cronet/reference/org/chromium/net/UrlRequest#cancel() 
-    activeRequests.remove(requestId)?.cancel()
+    activeRequests.remove(requestId)?.invoke()
   }
 
   private fun findPrefetchKey(req: NitroRequest): String? {
@@ -249,8 +249,10 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
       req: NitroRequest,
       onSuccess: (NitroResponse) -> Unit,
       onFail: (Throwable) -> Unit
-    ): UrlRequest? {
+    ): (() -> Unit)? {
       return try {
+        val trust = req.trust
+        if (trust != null) return startPinned(req, PinnedFetch.parsePins(trust), onSuccess, onFail)
         // Local resources (file://, content://, scheme-less paths) aren't HTTP; read off disk -> 200.
         if (!isHttpURL(req.url)) {
           onSuccess(makeLocalFileResponse(req))
@@ -259,7 +261,8 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
         if (hostHasWhitespace(req.url)) throw invalidUrlException(req.url)
         val engine = HybridNitroFetch.getEngine()
         val executor = HybridNitroFetch.ioExecutor
-        startCronet(engine, executor, req, onSuccess, onFail)
+        val request = startCronet(engine, executor, req, onSuccess, onFail)
+        return { request.cancel() }
       } catch (t: Throwable) {
         onFail(t)
         null
@@ -496,6 +499,23 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
       return request
     }
 
+    private fun startPinned(
+      req: NitroRequest,
+      pins: Set<String>,
+      onSuccess: (NitroResponse) -> Unit,
+      onFail: (Throwable) -> Unit
+    ): () -> Unit {
+      require(req.url.startsWith("https://", ignoreCase = true)) { "trust requires an https:// URL" }
+      if (hostHasWhitespace(req.url)) throw invalidUrlException(req.url)
+      val formParts = req.bodyFormData
+      val (body, contentType) = if (formParts != null && formParts.isNotEmpty()) {
+        buildMultipartBody(formParts)
+      } else {
+        Pair(uploadBytes(req), null)
+      }
+      return PinnedFetch.start(req, pins, body, contentType, HybridNitroFetch.ioExecutor, onSuccess, onFail)
+    }
+
     // bodyBytesBase64 is the auto-prefetch path: replayed from JSON, never a Nitro ArrayBuffer.
     private fun uploadBytes(req: NitroRequest): ByteArray? {
       req.bodyBytes?.let { ab ->
@@ -633,7 +653,7 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
   }
 
   override fun requestSync(req: NitroRequest): NitroResponse {
-    val key = findPrefetchKey(req)
+    val key = if (req.trust == null) findPrefetchKey(req) else null
     if (key != null) {
       FetchCache.getPending(key)?.let { fut ->
         return try {
@@ -668,8 +688,9 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
 
   override fun request(req: NitroRequest): Promise<NitroResponse> {
     val promise = Promise<NitroResponse>()
-    // Try to serve from prefetch cache/pending first
-    val key = findPrefetchKey(req)
+    // Try to serve from prefetch cache/pending first. A prefetched response was not
+    // checked against this request's pinned certificates.
+    val key = if (req.trust == null) findPrefetchKey(req) else null
     if (key != null) {
       // If a prefetch is currently pending, wait for it
       FetchCache.getPending(key)?.let { fut ->
@@ -692,7 +713,7 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
     }
     val requestId = req.requestId
     val finished = AtomicBoolean(false)
-    val urlRequest = fetch(
+    val cancel = fetch(
       req,
       onSuccess = { res ->
         finished.set(true)
@@ -707,9 +728,9 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
     )
     // Store after start() — if cancelRequest races and misses, the JS
     // catch block checks signal.aborted and throws AbortError anyway.
-    if (requestId != null && urlRequest != null) {
-      activeRequests[requestId] = urlRequest
-      if (finished.get()) activeRequests.remove(requestId, urlRequest)
+    if (requestId != null && cancel != null) {
+      activeRequests[requestId] = cancel
+      if (finished.get()) activeRequests.remove(requestId, cancel)
     }
     return promise
   }
@@ -719,6 +740,10 @@ class HybridNitroFetchClient(private val engine: CronetEngine, private val execu
     val key = findPrefetchKey(req)
     if (key.isNullOrEmpty()) {
       promise.reject(IllegalArgumentException("prefetch: missing 'prefetchKey' header"))
+      return promise
+    }
+    if (req.trust != null) {
+      promise.reject(IllegalArgumentException("trust is not supported by prefetch"))
       return promise
     }
     // If already have a fresh result, resolve immediately (NON-DESTRUCTIVE CHECK)

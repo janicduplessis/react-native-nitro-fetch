@@ -15,6 +15,7 @@ Drop-in replacement for the global `fetch`.
 - Returns a spec-compliant `Response` with `text()`, `json()`, `arrayBuffer()`, `blob()`, `bytes()`, `formData()`, `clone()`, a `body` stream, and `headers`
 - `formData()` parses `application/x-www-form-urlencoded` bodies only; other types, including `multipart/form-data`, reject with a `TypeError`
 - `init.priority` (`'high'`, `'low'` or `'auto'`) sets the network priority of plain, streamed, worklet and prefetch requests. On Android it sets the Cronet request priority, which orders requests waiting for a connection. On iOS it sets `URLSessionTask.priority` (iOS 16+ for non-streamed requests), which URLSession treats as a hint. `'auto'` keeps the default
+- `init.trust` (`{ certificateSha256: string[] }`) accepts the server only if its leaf certificate matches one of the fingerprints, instead of the system trust store and hostname check. See [Trusting a specific certificate](#trusting-a-specific-certificate)
 
 ```ts
 import { fetch } from 'react-native-nitro-fetch';
@@ -22,6 +23,32 @@ import { fetch } from 'react-native-nitro-fetch';
 const res = await fetch('https://jsonplaceholder.typicode.com/todos/1');
 const data = await res.json();
 ```
+
+## Trusting a specific certificate
+
+`init.trust` lets one request talk to a server whose certificate you already know, for example a desktop companion app on the local network that serves a self-signed certificate and shares its fingerprint through a QR code.
+
+```ts
+import { fetch } from 'react-native-nitro-fetch';
+
+const res = await fetch('https://192.168.1.20:8443/status', {
+  trust: {
+    certificateSha256: [
+      '72:A9:C4:05:73:D4:A3:00:3C:55:58:F9:E3:D4:FD:C0:71:6B:3A:2E:59:65:EE:2C:1A:54:52:0D:16:D5:9B:17',
+    ],
+  },
+});
+```
+
+- Each entry is the SHA-256 of the DER-encoded leaf certificate as 64 hex digits, case-insensitive, with optional `:` separators. `openssl x509 -in cert.pem -noout -fingerprint -sha256` prints it in this form.
+- The request succeeds only if the leaf certificate matches one of the entries. The system trust store, the certificate chain, expiry and the hostname are not checked for that request. Every request without `trust` keeps the default validation.
+- Pass `trust` in `fetch`'s `init`; it is not read from a `Request` object.
+- `https://` only. Redirects are followed only to `https://` URLs, and every hop must present a pinned certificate.
+- Pinned requests do not share connections with other requests, skip the HTTP cache, and are never served from the prefetch cache.
+- Not supported with `stream: true`, `prefetch()` or `prefetchOnAppStart()`; those throw a `TypeError`.
+- iOS uses a separate `URLSession` per set of fingerprints. On Android, Cronet cannot verify certificates per request, so pinned requests go through `HttpsURLConnection` instead. They do not use Cronet's HTTP/2, QUIC or cache, and are not reported to DevTools.
+
+> **Security:** only pin a certificate you received over a separate trusted channel, such as a QR code shown by the server or a value bundled with your app. Never pin the certificate a server presents on a first, unverified connection: anyone in the middle of that connection could present theirs.
 
 ## nitroFetchOnWorklet(input, init, mapWorklet, options?)
 

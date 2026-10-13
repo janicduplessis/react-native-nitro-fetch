@@ -16,6 +16,7 @@ export type { NitroFormDataPart } from '../NitroFetch.nitro';
 export type {
   NitroRequest as NitroRequestNativeType,
   NitroResponse as NitroResponseNativeType,
+  NitroRequestTrust,
 } from '../NitroFetch.nitro';
 export { NitroHeaders } from '../Headers';
 export { NitroResponse } from '../Response';

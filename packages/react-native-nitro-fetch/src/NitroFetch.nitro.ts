@@ -27,6 +27,16 @@ export interface NitroFormDataPart {
   mimeType?: string;
 }
 
+export interface NitroRequestTrust {
+  /**
+   * SHA-256 fingerprints of the DER-encoded leaf certificates to accept, as hex
+   * (64 digits, case-insensitive, `:` separators allowed). When set, the server
+   * is accepted only if its leaf certificate matches one of them; the system
+   * trust store and hostname are not checked for this request.
+   */
+  certificateSha256: string[];
+}
+
 export interface NitroRequest {
   url: string;
   method?: NitroRequestMethod;
@@ -49,6 +59,8 @@ export interface NitroRequest {
   prefetchCacheTtlMs?: number;
   // Optional ID used for cancellation via cancelRequest()
   requestId?: string;
+  // Accept only these server certificates instead of the system trust store
+  trust?: NitroRequestTrust;
 }
 
 export interface NitroResponse {

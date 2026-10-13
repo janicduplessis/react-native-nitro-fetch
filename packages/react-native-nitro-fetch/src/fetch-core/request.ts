@@ -1,4 +1,7 @@
-import type { NitroRequest as NitroRequestNative } from '../NitroFetch.nitro';
+import type {
+  NitroRequest as NitroRequestNative,
+  NitroRequestTrust,
+} from '../NitroFetch.nitro';
 import { NitroRequest as NitroRequestClass, rawBodyOf } from '../Request';
 import type { RequestRedirect, RequestCache } from '../Request';
 import {
@@ -16,6 +19,7 @@ export function buildNitroRequest(
     cache?: RequestCache;
     prefetchCacheTtlMs?: number;
     timeoutMs?: number;
+    trust?: NitroRequestTrust;
   }
 ): NitroRequestNative {
   'worklet';
@@ -84,13 +88,18 @@ export function buildNitroRequest(
     prefetchCacheTtlMs,
     timeoutMs,
     priority,
+    trust: init?.trust,
   };
 }
 
 // Pure JS version of buildNitroRequest that doesnt use anything that breaks worklets
 export function buildNitroRequestPure(
   input: RequestInfo | URL,
-  init?: RequestInit & { prefetchCacheTtlMs?: number; timeoutMs?: number }
+  init?: RequestInit & {
+    prefetchCacheTtlMs?: number;
+    timeoutMs?: number;
+    trust?: NitroRequestTrust;
+  }
 ): NitroRequestNative {
   'worklet';
   let url: string;
@@ -146,5 +155,6 @@ export function buildNitroRequestPure(
     prefetchCacheTtlMs,
     timeoutMs,
     priority,
+    trust: init?.trust,
   };
 }

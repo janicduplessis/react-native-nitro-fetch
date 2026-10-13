@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NitroModules
 import os
@@ -126,11 +127,16 @@ final class HybridNitroFetchClient: HybridNitroFetchClientSpec {
   }
 
   public class func requestStatic(_ req: NitroRequest, bodyData: Data? = nil) async throws -> NitroResponse {
+    let pins = try NitroPinnedSessions.pins(from: req.trust)
+    if pins != nil && !req.url.lowercased().hasPrefix("https://") {
+      throw NSError(domain: "NitroFetch", code: -5, userInfo: [NSLocalizedDescriptionKey: "trust requires an https:// URL"])
+    }
     // Local resources (file://, scheme-less paths) aren't HTTP; read off disk -> 200.
     if !isHttpURL(req.url) {
       return try makeLocalFileResponse(req)
     }
-    if let key = findPrefetchKey(req) {
+    // A prefetched response was not checked against this request's pinned certificates.
+    if pins == nil, let key = findPrefetchKey(req) {
       // If a prefetched result is fresh, return immediately
       if let cached = FetchCache.getResultIfFresh(key, maxAgeMs: req.prefetchCacheTtlMs ?? 5_000) {
         var headers = cached.headers ?? []
@@ -178,7 +184,12 @@ final class HybridNitroFetchClient: HybridNitroFetchClientSpec {
 
     let (urlRequest, finalURL) = try await buildURLRequest(req, bodyData: bodyData)
     let shouldFollowRedirects = req.followRedirects ?? true
-    let delegate = NitroTaskDelegate.make(followRedirects: shouldFollowRedirects, priority: req.priority)
+    let pinnedDelegate = pins.map {
+      NitroPinnedTaskDelegate(pins: $0, followRedirects: shouldFollowRedirects, priority: req.priority)
+    }
+    let delegate: URLSessionTaskDelegate? =
+      pinnedDelegate ?? NitroTaskDelegate.make(followRedirects: shouldFollowRedirects, priority: req.priority)
+    let requestSession = pins.map(NitroPinnedSessions.session(for:)) ?? session
 
     #if NITROFETCH_TRACING
     let signpostID = OSSignpostID(log: fetchLog)
@@ -200,7 +211,7 @@ final class HybridNitroFetchClient: HybridNitroFetchClientSpec {
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await session.data(for: urlRequest, delegate: delegate)
+      (data, response) = try await requestSession.data(for: urlRequest, delegate: delegate)
     } catch {
       #if DEBUG
       if NitroDevToolsReporter.isDebuggingEnabled() {
@@ -208,6 +219,9 @@ final class HybridNitroFetchClient: HybridNitroFetchClientSpec {
         NitroDevToolsReporter.reportRequestFailed(devToolsId, cancelled: cancelled)
       }
       #endif
+      if let failure = pinnedDelegate?.failure {
+        throw NSError(domain: "NitroFetch", code: -6, userInfo: [NSLocalizedDescriptionKey: failure])
+      }
       throw error
     }
     guard let http = response as? HTTPURLResponse else {
@@ -283,6 +297,9 @@ final class HybridNitroFetchClient: HybridNitroFetchClientSpec {
   public class func prefetchStatic(_ req: NitroRequest, bodyData: Data? = nil) async throws {
     guard let key = findPrefetchKey(req) else {
       throw NSError(domain: "NitroFetch", code: -2, userInfo: [NSLocalizedDescriptionKey: "prefetch: missing 'prefetchKey' header"])
+    }
+    if req.trust != nil {
+      throw NSError(domain: "NitroFetch", code: -5, userInfo: [NSLocalizedDescriptionKey: "trust is not supported by prefetch"])
     }
 
     if FetchCache.getResultIfFresh(key, maxAgeMs: req.prefetchCacheTtlMs ?? 5_000) != nil {
@@ -496,5 +513,104 @@ final class NitroTaskDelegate: NSObject, URLSessionTaskDelegate {
     completionHandler: @escaping @Sendable (URLRequest?) -> Void
   ) {
     completionHandler(followRedirects ? request : nil)
+  }
+}
+
+/// Sessions for requests with a `trust` option, one per pin set, so a connection or TLS
+/// session accepted by a pin is never reused by a request that expects system trust or
+/// other pins. They have no session delegate: the server trust challenge goes to
+/// `NitroPinnedTaskDelegate` and not to delegate-swizzling middleware, and no URL cache.
+enum NitroPinnedSessions {
+  private static var lock = os_unfair_lock()
+  private static var sessions: [Set<Data>: URLSession] = [:]
+
+  static func pins(from trust: NitroRequestTrust?) throws -> Set<Data>? {
+    guard let trust = trust else { return nil }
+    var pins = Set<Data>()
+    for fingerprint in trust.certificateSha256 {
+      let hex = Array(fingerprint.replacingOccurrences(of: ":", with: "").utf8)
+      let isHex = hex.allSatisfy { (0x30...0x39).contains($0) || (0x41...0x46).contains($0) || (0x61...0x66).contains($0) }
+      guard hex.count == 64, isHex else {
+        throw NSError(domain: "NitroFetch", code: -5, userInfo: [NSLocalizedDescriptionKey: "Invalid certificate SHA-256 fingerprint: \(fingerprint)"])
+      }
+      pins.insert(Data(stride(from: 0, to: 64, by: 2).map {
+        UInt8(String(decoding: hex[$0..<$0 + 2], as: UTF8.self), radix: 16)!
+      }))
+    }
+    guard !pins.isEmpty else {
+      throw NSError(domain: "NitroFetch", code: -5, userInfo: [NSLocalizedDescriptionKey: "trust.certificateSha256 must list at least one fingerprint"])
+    }
+    return pins
+  }
+
+  static func session(for pins: Set<Data>) -> URLSession {
+    os_unfair_lock_lock(&lock)
+    defer { os_unfair_lock_unlock(&lock) }
+    if let session = sessions[pins] { return session }
+    let config = URLSessionConfiguration.default
+    config.urlCache = nil
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    let session = URLSession(configuration: config)
+    sessions[pins] = session
+    return session
+  }
+}
+
+final class NitroPinnedTaskDelegate: NSObject, URLSessionTaskDelegate {
+  private let pins: Set<Data>
+  private let followRedirects: Bool
+  private let priority: Float?
+  private(set) var failure: String?
+
+  init(pins: Set<Data>, followRedirects: Bool, priority: NitroRequestPriority?) {
+    self.pins = pins
+    self.followRedirects = followRedirects
+    self.priority = priority?.taskPriority
+  }
+
+  @available(iOS 16.0, tvOS 16.0, *)
+  func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+    if let priority = priority { task.priority = priority }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+  ) {
+    guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+          let trust = challenge.protectionSpace.serverTrust else {
+      completionHandler(.performDefaultHandling, nil)
+      return
+    }
+    let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate]
+    if let leaf = chain?.first,
+       pins.contains(Data(SHA256.hash(data: SecCertificateCopyData(leaf) as Data))) {
+      completionHandler(.useCredential, URLCredential(trust: trust))
+    } else {
+      failure = "The server certificate does not match the pinned SHA-256 fingerprints"
+      completionHandler(.cancelAuthenticationChallenge, nil)
+    }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    guard followRedirects else {
+      completionHandler(nil)
+      return
+    }
+    guard request.url?.scheme?.lowercased() == "https" else {
+      failure = "Refused to follow a redirect to a non-https URL with certificate pinning"
+      task.cancel()
+      completionHandler(nil)
+      return
+    }
+    completionHandler(request)
   }
 }

@@ -33,6 +33,9 @@ export async function nitroFetchRaw(
   const hasNative =
     typeof (NitroFetchHybrid as any)?.createClient === 'function';
   if (!hasNative) {
+    if ((init as any)?.trust) {
+      throw new TypeError('trust requires the native NitroFetch client');
+    }
     // Fallback path not supported for raw; use global fetch and synthesize minimal shape
     // @ts-ignore: global fetch exists in RN
     const res = await fetch(input as any, init);
@@ -53,6 +56,9 @@ export async function nitroFetchRaw(
   }
 
   const req = buildNitroRequest(input, init);
+  if (req.trust && !/^https:/i.test(req.url)) {
+    throw new TypeError('trust requires an https:// URL');
+  }
 
   // Route non-http(s) (data:/file://content://scheme-less) off the HTTP client.
   if (!isHttpUrl(req.url)) {

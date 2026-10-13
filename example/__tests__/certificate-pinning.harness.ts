@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll } from 'react-native-harness';
-import { fetch as nitroFetch } from 'react-native-nitro-fetch';
+import {
+  fetch as nitroFetch,
+  nitroFetchOnWorklet,
+  prefetch,
+} from 'react-native-nitro-fetch';
 import { NitroWebSocket } from 'react-native-nitro-websockets';
 import type { WebSocketConnectOptions } from 'react-native-nitro-websockets';
-import { BASE, WS_BASE, WSS_TLS_BASE } from '../test-utils/server';
+import { BASE, TLS_BASE, WS_BASE, WSS_TLS_BASE } from '../test-utils/server';
 
 const WRONG_SHA256 = '00'.repeat(32);
 const TIMEOUT_MS = 10_000;
@@ -135,5 +139,131 @@ describe('Certificate pinning - WebSocket', () => {
           trust: { certificateSha256: [] },
         })
     ).toThrow();
+  });
+});
+
+async function rejection(p: Promise<unknown>): Promise<unknown> {
+  try {
+    await p;
+  } catch (e) {
+    return e;
+  }
+  throw new Error('Expected the request to fail');
+}
+
+describe('Certificate pinning - fetch', () => {
+  it('fetches from a self-signed server whose certificate is pinned', async () => {
+    const res = await nitroFetch(`${TLS_BASE}/get?pinned=1`, {
+      trust: { certificateSha256: [WRONG_SHA256, serverSha256] },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.args.pinned).toBe('1');
+  });
+
+  it('sends the body and follows https redirects', async () => {
+    const res = await nitroFetch(`${TLS_BASE}/redirect/2`, {
+      trust: { certificateSha256: [serverSha256] },
+    });
+    expect(res.status).toBe(200);
+    expect(res.redirected).toBe(true);
+    const post = await nitroFetch(`${TLS_BASE}/post`, {
+      method: 'POST',
+      body: 'hello',
+      headers: { 'Content-Type': 'text/plain' },
+      trust: { certificateSha256: [serverSha256] },
+    });
+    expect((await post.json()).data).toBe('hello');
+  });
+
+  it('applies the pin on a worklet', async () => {
+    const trust = { certificateSha256: [serverSha256] };
+    const status = await nitroFetchOnWorklet(
+      `${TLS_BASE}/get`,
+      { trust },
+      (payload) => {
+        'worklet';
+        return payload.status;
+      }
+    );
+    expect(status).toBe(200);
+    await rejection(
+      nitroFetchOnWorklet(
+        `${TLS_BASE}/get`,
+        { trust: { certificateSha256: [WRONG_SHA256] } },
+        (payload) => {
+          'worklet';
+          return payload.status;
+        }
+      )
+    );
+  });
+
+  it('rejects when the pin does not match', async () => {
+    await rejection(
+      nitroFetch(`${TLS_BASE}/get`, {
+        trust: { certificateSha256: [WRONG_SHA256] },
+      })
+    );
+  });
+
+  it('rejects without the trust option', async () => {
+    await rejection(nitroFetch(`${TLS_BASE}/get`));
+  });
+
+  it('still rejects an unpinned request after a pinned one to the same server', async () => {
+    const res = await nitroFetch(`${TLS_BASE}/get`, {
+      trust: { certificateSha256: [serverSha256] },
+    });
+    expect(res.status).toBe(200);
+    await rejection(nitroFetch(`${TLS_BASE}/get`));
+  });
+
+  it('rejects a publicly trusted server whose certificate is not pinned', async () => {
+    await rejection(
+      nitroFetch('https://www.google.com/generate_204', {
+        trust: { certificateSha256: [WRONG_SHA256] },
+      })
+    );
+    const unpinned = await nitroFetch('https://www.google.com/generate_204');
+    expect(unpinned.status).toBe(204);
+  });
+
+  it('does not follow a redirect to http://', async () => {
+    const to = encodeURIComponent(`${BASE}/get`);
+    await rejection(
+      nitroFetch(`${TLS_BASE}/redirect-to?url=${to}`, {
+        trust: { certificateSha256: [serverSha256] },
+      })
+    );
+  });
+
+  it('throws a TypeError for http://, streaming and prefetch', async () => {
+    const trust = { certificateSha256: [serverSha256] };
+    expect(
+      await rejection(nitroFetch(`${BASE}/get`, { trust }))
+    ).toBeInstanceOf(TypeError);
+    expect(
+      await rejection(nitroFetch(`${TLS_BASE}/get`, { trust, stream: true }))
+    ).toBeInstanceOf(TypeError);
+    expect(
+      await rejection(
+        prefetch(`${TLS_BASE}/get`, {
+          trust,
+          headers: { prefetchKey: 'pinned' },
+        } as RequestInit)
+      )
+    ).toBeInstanceOf(TypeError);
+  });
+
+  it('rejects a malformed fingerprint', async () => {
+    await rejection(
+      nitroFetch(`${TLS_BASE}/get`, {
+        trust: { certificateSha256: ['zz'] },
+      })
+    );
+    await rejection(
+      nitroFetch(`${TLS_BASE}/get`, { trust: { certificateSha256: [] } })
+    );
   });
 });

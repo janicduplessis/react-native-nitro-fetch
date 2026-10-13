@@ -293,7 +293,8 @@ object AutoPrefetcher {
       credentials = credentials,
       priority = priority,
       prefetchCacheTtlMs = prefetchCacheTtlMs,
-      requestId = null
+      requestId = null,
+      trust = null
     )
   }
 

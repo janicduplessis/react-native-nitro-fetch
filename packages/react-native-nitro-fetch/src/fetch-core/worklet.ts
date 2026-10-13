@@ -1,4 +1,4 @@
-import type { NitroHeader } from '../NitroFetch.nitro';
+import type { NitroHeader, NitroRequestTrust } from '../NitroFetch.nitro';
 import type { RequestPriority } from '../Request';
 import { NitroFetchHybrid } from './client';
 import { buildNitroRequestPure } from './request';
@@ -30,7 +30,11 @@ function ensureWorkletRuntime(name = 'nitro-fetch'): any | undefined {
 export async function nitroFetchOnWorklet<T>(
   input: RequestInfo | URL,
   init:
-    | (RequestInit & { timeoutMs?: number; priority?: RequestPriority })
+    | (RequestInit & {
+        timeoutMs?: number;
+        priority?: RequestPriority;
+        trust?: NitroRequestTrust;
+      })
     | undefined,
   mapWorklet: NitroWorkletMapper<T>,
   options?: { preferBytes?: boolean; runtimeName?: string }

@@ -56,7 +56,10 @@ data class NitroRequest(
   val prefetchCacheTtlMs: Double?,
   @DoNotStrip
   @Keep
-  val requestId: String?
+  val requestId: String?,
+  @DoNotStrip
+  @Keep
+  val trust: NitroRequestTrust?
 ) {
   /* primary constructor */
 
@@ -76,6 +79,7 @@ data class NitroRequest(
       && Objects.deepEquals(this.priority, other.priority)
       && Objects.deepEquals(this.prefetchCacheTtlMs, other.prefetchCacheTtlMs)
       && Objects.deepEquals(this.requestId, other.requestId)
+      && Objects.deepEquals(this.trust, other.trust)
   }
 
   override fun hashCode(): Int {
@@ -92,7 +96,8 @@ data class NitroRequest(
       credentials,
       priority,
       prefetchCacheTtlMs,
-      requestId
+      requestId,
+      trust
     ).contentDeepHashCode()
   }
 
@@ -104,8 +109,8 @@ data class NitroRequest(
     @Keep
     @Suppress("unused")
     @JvmStatic
-    private fun fromCpp(url: String, method: NitroRequestMethod?, headers: Array<NitroHeader>?, bodyString: String?, bodyBytes: ArrayBuffer?, bodyBytesBase64: String?, bodyFormData: Array<NitroFormDataPart>?, timeoutMs: Double?, followRedirects: Boolean?, credentials: NitroRequestCredentials?, priority: NitroRequestPriority?, prefetchCacheTtlMs: Double?, requestId: String?): NitroRequest {
-      return NitroRequest(url, method, headers, bodyString, bodyBytes, bodyBytesBase64, bodyFormData, timeoutMs, followRedirects, credentials, priority, prefetchCacheTtlMs, requestId)
+    private fun fromCpp(url: String, method: NitroRequestMethod?, headers: Array<NitroHeader>?, bodyString: String?, bodyBytes: ArrayBuffer?, bodyBytesBase64: String?, bodyFormData: Array<NitroFormDataPart>?, timeoutMs: Double?, followRedirects: Boolean?, credentials: NitroRequestCredentials?, priority: NitroRequestPriority?, prefetchCacheTtlMs: Double?, requestId: String?, trust: NitroRequestTrust?): NitroRequest {
+      return NitroRequest(url, method, headers, bodyString, bodyBytes, bodyBytesBase64, bodyFormData, timeoutMs, followRedirects, credentials, priority, prefetchCacheTtlMs, requestId, trust)
     }
   }
 }
